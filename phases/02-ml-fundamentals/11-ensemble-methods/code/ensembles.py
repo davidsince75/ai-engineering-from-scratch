@@ -476,7 +476,7 @@ def demo_sklearn_comparison():
     ada_ours.fit(X_train, y_train)
     print(f"  Our AdaBoost:      {ada_ours.accuracy(X_test, y_test):.3f}")
 
-    ada_sk = AdaBoostClassifier(n_estimators=50, random_state=42, algorithm="SAMME")
+    ada_sk = AdaBoostClassifier(n_estimators=50, random_state=42)
     ada_sk.fit(X_train_01, y_train_01)
     print(f"  sklearn AdaBoost:  {accuracy_score(y_test_01, ada_sk.predict(X_test_01)):.3f}")
 
