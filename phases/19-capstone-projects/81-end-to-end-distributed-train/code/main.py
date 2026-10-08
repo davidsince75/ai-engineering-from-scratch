@@ -9,6 +9,10 @@ Composes the pieces built in lessons 76-80:
 20 steps, self-terminating, prints loss curve, per-rank memory profile, and a
 RESUME VERIFIED line proving the step-10 checkpoint reloads byte-equal.
 
+Workers hand their checkpoint snapshot back as a numpy array. A torch tensor
+put on a queue travels on Linux as a file descriptor that dies with the
+sending process, and each worker exits right after its put.
+
 Run: python3 code/main.py
 """
 
@@ -350,8 +354,9 @@ def _train_worker(rank: int, world_size: int, init_file: str, iface: str,
                 save_sharded(all_states, ckpt_dir, step=CHECKPOINT_STEP)
             dist.barrier()
     param_norm = sum(p.detach().pow(2).sum().item() for p in model.parameters()) ** 0.5
+    master_snapshot = None if master_at_ckpt is None else master_at_ckpt.numpy()
     out_queue.put((rank, rank0_losses if rank == 0 else [], param_norm, optim.shard_bytes(),
-                   master_at_ckpt))
+                   master_snapshot))
     out_queue.close()
     out_queue.join_thread()
     os._exit(0)
@@ -377,12 +382,12 @@ def run_e2e(world_size: int = WORLD_SIZE, steps: int = STEPS) -> dict:
                 procs.append(p)
             results = {}
             for _ in range(world_size):
-                rank, losses, norm, shard_bytes, master_at_ckpt = out_queue.get(timeout=180)
+                rank, losses, norm, shard_bytes, snapshot = out_queue.get(timeout=180)
                 results[rank] = {
                     "losses": losses,
                     "norm": norm,
                     "shard_bytes": shard_bytes,
-                    "master_at_ckpt": master_at_ckpt,
+                    "master_at_ckpt": None if snapshot is None else torch.from_numpy(snapshot),
                 }
         except Exception:
             cleanup_workdir = True
