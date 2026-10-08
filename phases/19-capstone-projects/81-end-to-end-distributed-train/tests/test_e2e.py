@@ -25,14 +25,16 @@ from main import (  # noqa: E402
 
 
 class TestEndToEnd(unittest.TestCase):
-    def setUp(self):
-        self.out = run_e2e(world_size=WORLD_SIZE, steps=20)
-        self.results = self.out["results"]
-        self.ckpt_dir = self.out["ckpt_dir"]
+    @classmethod
+    def setUpClass(cls):
+        cls.out = run_e2e(world_size=WORLD_SIZE, steps=20)
+        cls.results = cls.out["results"]
+        cls.ckpt_dir = cls.out["ckpt_dir"]
 
-    def tearDown(self):
-        if "workdir" in self.out:
-            shutil.rmtree(self.out["workdir"], ignore_errors=True)
+    @classmethod
+    def tearDownClass(cls):
+        if "workdir" in cls.out:
+            shutil.rmtree(cls.out["workdir"], ignore_errors=True)
 
     def test_all_ranks_end_with_same_param_norm(self):
         norms = [self.results[r]["norm"] for r in range(WORLD_SIZE)]
