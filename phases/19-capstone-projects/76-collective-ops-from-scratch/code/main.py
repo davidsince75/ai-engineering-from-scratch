@@ -12,6 +12,11 @@ The mesh workers use the 'fork' multiprocessing context so child processes
 inherit Queue file descriptors without pickling. The gloo reference workers
 use 'spawn' because torch.distributed needs a clean process. Both contexts
 ship in stdlib multiprocessing.
+
+Every tensor crosses a process boundary as a numpy array, so each message is a
+byte copy, as on a real wire. A torch tensor put on a queue travels on Linux as
+a file descriptor that dies with the sending process, and ranks here exit right
+after their last send.
 """
 
 from __future__ import annotations
@@ -58,12 +63,12 @@ class Mesh:
         if self.byte_counter is not None:
             with self.byte_counter.get_lock():
                 self.byte_counter.value += nbytes
-        self.out_queues[dst].put(payload)
+        self.out_queues[dst].put(payload.numpy())
 
     def recv(self, src: int) -> torch.Tensor:
         if src == self.rank:
             raise ValueError("rank cannot recv from itself")
-        return self.in_queues[src].get(timeout=RECV_TIMEOUT_S)
+        return torch.from_numpy(self.in_queues[src].get(timeout=RECV_TIMEOUT_S))
 
 
 def build_queue_grid(ctx, world_size: int):
@@ -227,7 +232,7 @@ def _gloo_worker(rank: int, world_size: int, op: str, tensor_bytes: bytes,
         out = recv
     else:
         raise ValueError(f"unknown op {op}")
-    out_queue.put((rank, out.clone()))
+    out_queue.put((rank, out.numpy()))
     out_queue.close()
     out_queue.join_thread()
     os._exit(0)
@@ -259,8 +264,8 @@ def gloo_reference(op: str, world_size: int,
             procs.append(p)
         results = {}
         for _ in range(world_size):
-            rank, tensor = out_queue.get(timeout=60)
-            results[rank] = tensor
+            rank, array = out_queue.get(timeout=60)
+            results[rank] = torch.from_numpy(array)
         return [results[r] for r in range(world_size)]
     finally:
         for p in procs:
@@ -294,7 +299,7 @@ def _mesh_worker(rank: int, world_size: int, op: str,
         result = reduce_scatter(mesh, tensor)
     else:
         raise ValueError(f"unknown op {op}")
-    out_queue.put((rank, result))
+    out_queue.put((rank, result.numpy()))
 
 
 def run_mesh(op: str, world_size: int,
@@ -319,8 +324,8 @@ def run_mesh(op: str, world_size: int,
             procs.append(p)
         results = {}
         for _ in range(world_size):
-            rank, tensor = out_queue.get(timeout=60)
-            results[rank] = tensor
+            rank, array = out_queue.get(timeout=60)
+            results[rank] = torch.from_numpy(array)
         return [results[r] for r in range(world_size)], byte_counter.value
     finally:
         for p in procs:
